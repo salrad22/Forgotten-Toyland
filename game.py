@@ -1227,6 +1227,28 @@ def on_mouse_down(pos, button):
             game.state = MENU
 
 
+# --- Fixed window size ----------------------------------------------------
+# Some window managers (e.g. WSLg) let players maximize even a
+# non-resizable pygame window, which leaves the game stuck in the
+# corner of a big empty window. pgzero calls reinit_screen() every
+# frame, so we wrap it: if the window manager has changed the window
+# size, snap the display straight back to the fixed game size.
+
+_original_reinit_screen = pgzero.game.PGZeroGame.reinit_screen
+
+
+def _reinit_screen_fixed(self):
+    """Run pgzero's screen setup, then lock the window to the game size."""
+    _original_reinit_screen(self)
+    display = pgzero.game.pygame.display
+    surface = display.get_surface()
+    if surface is not None and surface.get_size() != (WIDTH, HEIGHT):
+        display.set_mode((WIDTH, HEIGHT), pgzero.game.DISPLAY_FLAGS)
+
+
+pgzero.game.PGZeroGame.reinit_screen = _reinit_screen_fixed
+
+
 # The main theme loops on the dedicated music channel; the menu's
 # Music & Sounds button controls its volume (music.set_volume), so the
 # toggle always governs this track no matter where it's clicked.

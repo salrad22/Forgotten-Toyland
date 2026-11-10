@@ -65,6 +65,8 @@ as soon as they both reach the open exit.
   (Robot/Bear) classes
 - Version-proof sprite rendering (explicit foot-anchored drawing),
   fixed-size collision hitboxes, fixed-timestep physics
+- Fixed window size: if the OS lets someone maximize the window, the
+  game snaps it back to 1300x708 every frame
 - Original artwork, animation frames, music and sound effects by the
   project author; starter-pack assets (`background.png`,
   `sounds/eep.wav`) from the Kodland course
