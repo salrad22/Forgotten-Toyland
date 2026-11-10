@@ -1068,7 +1068,7 @@ def draw_pause_overlay():
 def draw_end_overlay(won):
     screen.draw.filled_rect(Rect((0, 0), (WIDTH, HEIGHT)), OVERLAY_COLOR)
     if won:
-        screen.draw.text('TOYLAND SAVED!', center=(WIDTH / 2, 180),
+        screen.draw.text('TEDDY BEAR SAVED!', center=(WIDTH / 2, 180),
                          fontsize=54, color=FRIENDLY_GREEN)
         screen.draw.text(
             'You saved the bear! Mother and child escape Toyland together.',
