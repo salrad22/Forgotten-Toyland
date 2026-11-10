@@ -79,6 +79,8 @@ when approaching the bear, but BOTH characters must be at the exit
 Menu
 ----
 - Start Game - begins a new level
+- Instructions - shows the goal of the game, how to win step by
+  step, and the controls (Esc or Back returns to the menu)
 - Music & Sounds: ON/OFF - mutes/unmutes both background music and
   sound effects (the setting is kept between games)
 - Exit - closes the game
@@ -87,12 +89,19 @@ Assets & attribution
 --------------------
 - images/mom_*.png, images/baby_*.png (the mother, the child she
   carries, and their animation frames), images/robot_*.png,
-  images/platform_*.png and images/tunnel.png are original artwork
-  created by the project author for this game.
-- images/bear.png, images/background.png, music/background_music.ogg
-  and sounds/eep.wav were included with the project starter pack
-  (Kodland course assets).
-- The wind-up robot, the bear's eye and the exit door are drawn with
-  plain colored rectangles as placeholder art; the single "eep" sound
-  is reused (rate-limited) as a placeholder for alerts, calls,
-  pickups and repairs until final artwork and audio are added.
+  images/angry_bear_*.png, images/bear_fixed.png,
+  images/bear_wave_thanks.png, images/platform_*.png and
+  images/tunnel.png are original artwork created by the project
+  author for this game.
+- sounds/steps.ogg, sounds/jump.wav, sounds/robot_noise.wav,
+  sounds/robot_attack.wav, sounds/bear_fixed.wav,
+  sounds/complete_level.wav and sounds/when_losing.wav are original
+  audio created by the project author for this game.
+- images/bear.png, images/background.png and sounds/eep.wav were
+  included with the project starter pack (Kodland course assets);
+  eep.wav is still used for the Mommy call, eye pickup and carry
+  sounds.
+- The bear's eye and the exit door are drawn with plain colored
+  rectangles as placeholder art; the single "eep" sound is reused
+  (rate-limited) as a placeholder for alerts, calls, pickups and
+  repairs until final artwork and audio are added.

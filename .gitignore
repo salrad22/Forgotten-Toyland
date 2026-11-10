@@ -1,3 +1,6 @@
 myenv
 local_docs
 __pycache__/
+*_test.py
+test_*.py
+tests/

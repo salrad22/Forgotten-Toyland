@@ -18,7 +18,7 @@ TITLE = 'Lost in Toyland'
 GRAVITY = 1500
 MOTHER_SPEED = 270
 CHILD_SPEED = 210
-MOTHER_JUMP = -650
+MOTHER_JUMP = -750
 
 # Gameplay tuning
 CHILD_RADIUS = 260          # max distance the child may stray from mother
@@ -27,13 +27,19 @@ INTERACT_DISTANCE = 150     # range for repair / exit hints
 INTRO_TIME = 6.0            # seconds the control banner stays visible
 MOMMY_TIME = 1.4            # seconds the "Mommy!" call stays on screen
 WALK_FRAME_TIME = 0.12      # seconds per walk-animation frame
+CHARGE_FRAME_TIME = 0.06     # robot walk cycle while charging (fast)
 POSE_TIME = 0.5             # seconds a one-off pose (pickup/drop) shows
+THANKS_TIME = 2.0           # seconds the saved bear waves thanks
+STEP_TIME = 0.25             # seconds between footstep sounds
 TUNNEL_ALPHA = 160          # tunnel transparency: 0 = invisible, 255 = solid
 
 # Level geometry
 FLOOR = Rect((0, 660), (WIDTH, 48))
 PLATFORMS = [
-    Rect((180, 540), (130, 20)),   # the single step near the spawn
+    # Raised above the 150px-tall robot's head so it walks under cleanly
+    # (bottom at 500 vs robot head at 510) - the mother's bigger jump
+    # (187px rise) still lands on the 180px climb.
+    Rect((180, 480), (130, 20)),
 ]
 # The tunnel block sits ON the floor. It is solid for the mother
 # (who can jump over it - it is shorter than her jump), but the baby,
@@ -48,6 +54,7 @@ DOOR = Rect((1255, 545), (45, 115))
 
 # Game states
 MENU = 'menu'
+INSTRUCTIONS = 'instructions'
 PLAYING = 'playing'
 PAUSED = 'paused'
 WIN = 'win'
@@ -64,10 +71,24 @@ DOOR_OPEN = (60, 180, 90)
 FRIENDLY_GREEN = (90, 220, 130)
 
 
-def play_sound():
-    """Play the (single, placeholder) sound effect if audio is on."""
+def play_sound(name='eep'):
+    """Play a sound effect if audio is enabled."""
     if game.audio_on:
-        sounds.eep.play()
+        getattr(sounds, name).play()
+
+
+SOUND_NAMES = ['eep', 'jump', 'steps', 'robot_noise', 'robot_attack',
+               'bear_fixed', 'complete_level', 'when_losing']
+
+
+def stop_all_sounds():
+    """Stop any sound effect still playing.
+
+    Long stingers (the defeat sting runs ~7 seconds) would otherwise
+    keep playing over the menu music after leaving the end screens.
+    """
+    for name in SOUND_NAMES:
+        getattr(sounds, name).stop()
 
 
 def distance(a, b):
@@ -123,6 +144,7 @@ class Character:
         self.transition_image = None
         self.transition_timer = 0.0
         self.calling = False
+        self.step_timer = 0.0
         self.reset()
 
     def set_image(self, image_name):
@@ -154,6 +176,7 @@ class Character:
         self.facing = 1
         self.walk_animation.reset()
         self.transition_timer = 0.0
+        self.step_timer = 0.0
         self.calling = False
 
     @property
@@ -178,6 +201,7 @@ class Character:
     def jump(self):
         self.velocity_y = self.jump_velocity
         self.on_ground = False
+        play_sound('jump')
 
     def _overlaps(self, solid):
         """Float-precise overlap test between the fixed box and `solid`."""
@@ -242,11 +266,16 @@ class Character:
             frame = self.transition_image
         elif not self.on_ground:
             frame = self.jump_image
-        elif move_direction:
+        elif move_direction and self.on_ground:
             self.walk_animation.update(dt)
             frame = self.walk_animation.frame
+            self.step_timer -= dt
+            if self.step_timer <= 0:
+                self.step_timer = STEP_TIME
+                play_sound('steps')
         else:
             self.walk_animation.reset()
+            self.step_timer = 0.0
             frame = self.idle_image
         if frame != self.actor.image:
             self.set_image(frame)
@@ -311,6 +340,8 @@ class Enemy:
     """Base class for patrolling enemies with a telegraphed charge."""
 
     killer_label = 'enemy'
+    alert_sound = 'eep'       # played when the enemy spots a target
+    attack_sound = None      # played when it starts charging
 
     def __init__(self, patrol_left, patrol_right, speed, charge_speed,
                  alert_time, detect_range):
@@ -369,12 +400,14 @@ class Enemy:
                     self.state = 'alert'
                     self.alert_timer = self.alert_time
                     self.charge_direction = 1 if target.x > self.x else -1
-                    play_sound()
+                    play_sound(self.alert_sound)
                     break
         elif self.state == 'alert':
             self.alert_timer -= dt
             if self.alert_timer <= 0:
                 self.state = 'charge'
+                if self.attack_sound:
+                    play_sound(self.attack_sound)
         else:
             if self.advance(self.charge_direction * self.charge_speed * dt):
                 self.state = 'patrol'
@@ -384,23 +417,52 @@ class Robot(Enemy):
     """The wind-up robot guarding the corridor before the tunnel."""
 
     killer_label = 'robot'
-    BODY_COLOR = (150, 155, 170)
-    ALERT_COLOR = (210, 70, 60)
+    alert_sound = 'robot_noise'
+    attack_sound = 'robot_attack'
+    BOX_WIDTH = 56
+    BOX_HEIGHT = 72
+    WALK_FRAMES = ['robot_walk_1', 'robot_walk_2',
+                   'robot_walk_3', 'robot_walk_4']
+    DANGER_IMAGE = 'robot_danger'
+    IDLE_IMAGE = 'robot_idle'
 
     def __init__(self):
-        super().__init__(260, 470, speed=55, charge_speed=300,
+        super().__init__(33, 470, speed=40, charge_speed=300,
                          alert_time=0.9, detect_range=170)
-        self.width = 56
-        self.height = 72
+        self.actor = Actor(self.IDLE_IMAGE, (360, FLOOR.top))
+        self.walk_animation = Animation(self.WALK_FRAMES, WALK_FRAME_TIME)
+        self.charge_animation = Animation(self.WALK_FRAMES,
+                                          CHARGE_FRAME_TIME)
         self.reset()
+
+    def set_image(self, image_name):
+        """Swap sprite frames while keeping the robot's feet planted."""
+        center_x = self.actor.x
+        feet = self.actor.y
+        self.actor.image = image_name
+        self.actor.anchor = (self.actor.width / 2, self.actor.height)
+        self.actor.x = center_x
+        self.actor.y = feet
 
     def reset(self):
         super().reset()
-        self.x = 360
+        self.set_image(self.IDLE_IMAGE)
+        self.actor.x = 360
+        self.actor.y = FLOOR.top
+        self.walk_animation.reset()
+        self.charge_animation.reset()
+
+    @property
+    def x(self):
+        return self.actor.x
+
+    @x.setter
+    def x(self, value):
+        self.actor.x = value
 
     @property
     def y(self):
-        return FLOOR.top - self.height / 2
+        return self.actor.y
 
     @property
     def bottom(self):
@@ -408,40 +470,58 @@ class Robot(Enemy):
 
     @property
     def box(self):
-        return Rect((self.x - self.width / 2, self.bottom - self.height),
-                    (self.width, self.height))
+        return Rect((self.x - self.BOX_WIDTH / 2,
+                     self.bottom - self.BOX_HEIGHT),
+                    (self.BOX_WIDTH, self.BOX_HEIGHT))
 
     def update(self, dt, targets):
         self.update_brain(dt, targets)
+        self.animate(dt)
+
+    def animate(self, dt):
+        """Pick the sprite frame for the current state.
+
+        - patrol: walk cycle at normal pace
+        - alert (mom spotted): danger pose
+        - charge: the same walk cycle, twice as fast
+        """
+        if self.state == 'alert':
+            self.walk_animation.reset()
+            self.charge_animation.reset()
+            frame = self.DANGER_IMAGE
+        elif self.state == 'charge':
+            self.charge_animation.update(dt)
+            frame = self.charge_animation.frame
+        else:
+            self.walk_animation.update(dt)
+            frame = self.walk_animation.frame
+        if frame != self.actor.image:
+            self.set_image(frame)
 
     def draw(self):
-        left = self.x - self.width / 2
-        top = self.bottom - self.height
-        flashing = self.state == 'alert' and int(self.alert_timer * 8) % 2 == 0
-        body_color = self.ALERT_COLOR if flashing else self.BODY_COLOR
-        screen.draw.filled_rect(
-            Rect((left, top + 14), (self.width, self.height - 14)),
-            body_color)
-        screen.draw.filled_circle((self.x, top + 14), 14, body_color)
-        eye_color = (255, 60, 60) if self.state != 'patrol' else (35, 35, 55)
-        for offset in (-8, 8):
-            screen.draw.filled_circle(
-                (self.x + offset + self.direction * 3, top + 12), 4,
-                eye_color)
-        key_x = self.x - self.direction * (self.width / 2 + 10)
-        screen.draw.filled_circle((key_x, top + 30), 6, (200, 170, 70))
-        screen.draw.line((key_x, top + 30), (key_x, top + 6), (200, 170, 70))
+        if self.state == 'charge':
+            facing = self.charge_direction
+        else:
+            facing = self.direction
+        draw_sprite_feet_down(self.actor, flip=facing < 0)
         if self.state == 'alert':
-            screen.draw.text('!', center=(self.x, top - 22), fontsize=40,
-                            color=(255, 80, 80))
+            screen.draw.text('!',
+                              center=(self.actor.x,
+                                      self.actor.y - self.actor.height
+                                      - 22),
+                              fontsize=40, color=(255, 80, 80))
 
 
 class Bear(Enemy):
     """The broken bear: attacks what it sees until it is saved."""
 
     killer_label = 'toy'
-    BASE_IMAGE = 'bear'
-    HAPPY_IMAGE = 'bear_happy'
+    BASE_IMAGE = 'angry_bear_idle'
+    WALK_FRAMES = ['angry_bear_walk_1', 'angry_bear_walk_2',
+                   'angry_bear_walk_3']
+    DANGER_IMAGE = 'angry_bear_danger'
+    HAPPY_IMAGE = 'bear_fixed'
+    WAVE_IMAGE = 'bear_wave_thanks'
     BOX_WIDTH = 66
     BOX_HEIGHT = 99
 
@@ -449,6 +529,9 @@ class Bear(Enemy):
         super().__init__(1090, 1240, speed=50, charge_speed=230,
                          alert_time=0.7, detect_range=240)
         self.actor = Actor(self.BASE_IMAGE, (1150, FLOOR.top))
+        self.walk_animation = Animation(self.WALK_FRAMES, WALK_FRAME_TIME)
+        self.charge_animation = Animation(self.WALK_FRAMES,
+                                          CHARGE_FRAME_TIME)
         self.repaired = False
         self.happy_sprite = False
         self.reset()
@@ -466,14 +549,17 @@ class Bear(Enemy):
         super().reset()
         self.repaired = False
         self.happy_sprite = False
+        self.thanks_timer = 0.0
         self.set_image(self.BASE_IMAGE)
         self.actor.x = 1150
         self.actor.y = FLOOR.top
+        self.walk_animation.reset()
+        self.charge_animation.reset()
 
     def show_saved(self):
-        """Swap to the happy sprite once the artwork is available.
+        """Swap to the fixed sprite and briefly wave thanks.
 
-        Until images/bear_happy.png exists, the bear keeps its angry
+        Until the saved-bear artwork exists, the bear keeps its angry
         sprite and a green heart is drawn above it instead.
         """
         try:
@@ -484,6 +570,12 @@ class Bear(Enemy):
             # actor, so point it back at the base sprite.
             self.set_image(self.BASE_IMAGE)
             self.happy_sprite = False
+            return
+        try:
+            self.set_image(self.WAVE_IMAGE)
+            self.thanks_timer = THANKS_TIME
+        except KeyError:
+            self.thanks_timer = 0.0
 
     @property
     def x(self):
@@ -509,12 +601,42 @@ class Bear(Enemy):
 
     def update(self, dt, targets):
         if self.repaired:
-            self.advance(self.direction * self.speed * 0.6 * dt)
+            # The saved bear stops walking and stands still, waving
+            # thanks for a moment before settling into its fixed pose.
+            if self.thanks_timer > 0:
+                self.thanks_timer -= dt
+                if self.thanks_timer <= 0:
+                    self.set_image(self.HAPPY_IMAGE)
             return
         self.update_brain(dt, targets)
+        self.animate(dt)
+
+    def animate(self, dt):
+        """Pick the sprite frame for the current state.
+
+        - patrol: walk cycle at normal pace
+        - alert (player spotted): danger pose
+        - charge: the same walk cycle, twice as fast
+        """
+        if self.state == 'alert':
+            self.walk_animation.reset()
+            self.charge_animation.reset()
+            frame = self.DANGER_IMAGE
+        elif self.state == 'charge':
+            self.charge_animation.update(dt)
+            frame = self.charge_animation.frame
+        else:
+            self.walk_animation.update(dt)
+            frame = self.walk_animation.frame
+        if frame != self.actor.image:
+            self.set_image(frame)
 
     def draw(self):
-        draw_sprite_feet_down(self.actor)
+        if self.state == 'charge':
+            facing = self.charge_direction
+        else:
+            facing = self.direction
+        draw_sprite_feet_down(self.actor, flip=facing < 0)
         center_x = self.actor.x
         top = self.box.top
         if self.repaired:
@@ -565,6 +687,7 @@ class Game:
 
     def start(self):
         self.reset_level()
+        stop_all_sounds()
         self.state = PLAYING
 
     def flash(self, message):
@@ -627,7 +750,7 @@ class Game:
                 if enemy.touches(target):
                     self.state = LOSE
                     self.killer = enemy.killer_label
-                    play_sound()
+                    play_sound('when_losing')
                     return
 
         if self.bear.repaired:
@@ -677,10 +800,10 @@ class Game:
                     and self.behind_bear(character)):
                 self.bear.repaired = True
                 self.bear.show_saved()
-                play_sound()
+                play_sound('bear_fixed')
                 self.flash('You saved the bear! The exit is open!')
                 if character is self.mother and self.mother.carrying:
-                    self.mother.flash_frame('mom_baby_sucess', 1.0)
+                    self.mother.flash_frame('mom_baby_victory', THANKS_TIME)
                 return
 
     def try_use_exit(self):
@@ -688,7 +811,7 @@ class Game:
         hero = self.active
         if abs(hero.x - DOOR.centerx) < 90 and self.both_at_door():
             self.state = WIN
-            play_sound()
+            play_sound('complete_level')
 
     def build_prompt(self):
         hero = self.active
@@ -784,9 +907,11 @@ game = Game()
 
 # --- UI layout -----------------------------------------------------------
 
-START_RECT = Rect((500, 300), (300, 62))
-MENU_AUDIO_RECT = Rect((500, 382), (300, 62))
-MENU_EXIT_RECT = Rect((500, 464), (300, 62))
+START_RECT = Rect((500, 270), (300, 62))
+INSTRUCTIONS_RECT = Rect((500, 352), (300, 62))
+MENU_AUDIO_RECT = Rect((500, 434), (300, 62))
+MENU_EXIT_RECT = Rect((500, 516), (300, 62))
+BACK_RECT = Rect((500, 600), (300, 62))
 RESUME_RECT = Rect((500, 280), (300, 62))
 PAUSE_AUDIO_RECT = Rect((500, 362), (300, 62))
 PAUSE_MENU_RECT = Rect((500, 444), (300, 62))
@@ -813,18 +938,47 @@ def draw_background():
     screen.blit('background', (x, y))
 
 
-def draw_sprite_feet_down(actor):
+_MIRRORED = {}
+
+
+def mirrored(surface):
+    """A horizontally flipped copy of a sprite (cached per surface).
+
+    pgzero 1.2.1 has no sprite-flipping API, so the mirror is built by
+    blitting 1-pixel vertical strips right-to-left - once per image.
+    The canvas is cleared to fully transparent first: blitting the
+    strips onto a copy of the original artwork would leave the
+    original showing through every transparent gap, producing a
+    doubled 'ghost' sprite.
+    """
+    key = id(surface)
+    if key not in _MIRRORED:
+        width = surface.get_width()
+        height = surface.get_height()
+        canvas = surface.copy()
+        canvas.fill((0, 0, 0, 0))
+        for column in range(width):
+            strip = surface.subsurface((width - 1 - column, 0, 1, height))
+            canvas.blit(strip, (column, 0))
+        _MIRRORED[key] = canvas
+    return _MIRRORED[key]
+
+
+def draw_sprite_feet_down(actor, flip=False):
     """Draw a character sprite with its feet at actor.y, centred on
     actor.x, using explicit coordinates.
 
     Actor.draw()/anchor semantics differ between pgzero versions, so
     characters are positioned manually - this works everywhere.
     Draws the actor's already-loaded surface (not the image name, which
-    could point at an image that failed to load).
+    could point at an image that failed to load). Set flip=True to
+    mirror the sprite horizontally (e.g. to face left).
     """
     surface = getattr(actor, '_surf', None)
     if surface is None:
         surface = actor.image
+    if flip:
+        surface = mirrored(surface)
     screen.blit(surface, (actor.x - actor.width / 2,
                           actor.y - actor.height))
 
@@ -842,20 +996,64 @@ def audio_button_label(prefix):
 
 def draw_menu():
     draw_background()
-    screen.draw.text('LOST IN TOYLAND', center=(WIDTH / 2, 120), fontsize=64,
+    screen.draw.text('LOST IN TOYLAND', center=(WIDTH / 2, 160), fontsize=64,
                      color=GOLD)
     screen.draw.text(
-        'Mother and child are lost in an abandoned Toyland.',
-        center=(WIDTH / 2, 185), fontsize=22, color=INK)
-    screen.draw.text(
-        'Survive the wind-up robot, find the bear eye in the tunnel,',
-        center=(WIDTH / 2, 212), fontsize=22, color=INK)
-    screen.draw.text(
-        'repair the bear and escape together!',
-        center=(WIDTH / 2, 239), fontsize=22, color=INK)
+        'Even the angriest toys might just need a little help...',
+        center=(WIDTH / 2, 210), fontsize=24, color=INK)
     draw_button(START_RECT, 'Start Game')
+    draw_button(INSTRUCTIONS_RECT, 'Instructions')
     draw_button(MENU_AUDIO_RECT, audio_button_label(''))
     draw_button(MENU_EXIT_RECT, 'Exit')
+
+
+def draw_instructions():
+    """The instructions screen - written as a mysterious note, with
+    hints rather than spoilers."""
+    draw_background()
+    screen.draw.text('AN OLD NOTE, FOUND IN TOYLAND',
+                     center=(WIDTH / 2, 85), fontsize=40, color=GOLD)
+
+    left = 250
+    y = 155
+    for line in [
+        'The toys of Toyland look angry...',
+        '...but angry things are sometimes just',
+        'things that need help.',
+        '',
+        'Be careful of the metal guards - when',
+        'one winds up, get out of its way.',
+        '',
+        'Something small was lost in the dark.',
+        'Only the littlest traveler can crawl',
+        'where the big cannot... but do not let',
+        'it stray too far from its mother.',
+        '',
+        'The broken one cannot see behind',
+        'itself. Approach with kindness.',
+        '',
+        'And the great door? It opens only for',
+        'two who leave together.',
+    ]:
+        screen.draw.text(line, (left, y), fontsize=20, color=INK)
+        y += 25
+
+    right = 800
+    screen.draw.text('CONTROLS', (right, 155), fontsize=26, color=GOLD)
+    y = 195
+    for keys_text, action in [
+        ('Left / Right or A / D', 'move'),
+        ('Up or W', 'jump (mother only)'),
+        ('E', 'pick up / put down child'),
+        ('SPACE or TAB', 'switch character'),
+        ('ESC', 'pause'),
+        ('Mouse', 'all menu buttons'),
+    ]:
+        screen.draw.text(keys_text, (right, y), fontsize=20, color=INK)
+        screen.draw.text(action, (right + 175, y), fontsize=20, color=GOLD)
+        y += 34
+
+    draw_button(BACK_RECT, 'Back')
 
 
 def draw_pause_overlay():
@@ -905,9 +1103,6 @@ def draw_level():
 
     images.tunnel.set_alpha(TUNNEL_ALPHA)
     screen.blit('tunnel', TUNNEL.topleft)
-    screen.draw.text('TUNNEL - child only', center=(TUNNEL.centerx,
-                                                    TUNNEL.top - 14),
-                     fontsize=18, color=INK)
 
     door_color = DOOR_OPEN if game.bear.repaired else DOOR_LOCKED
     screen.draw.filled_rect(DOOR, door_color)
@@ -962,6 +1157,9 @@ def draw():
     if game.state == MENU:
         draw_menu()
         return
+    if game.state == INSTRUCTIONS:
+        draw_instructions()
+        return
     draw_level()
     draw_hud()
     if game.state == PAUSED:
@@ -987,6 +1185,8 @@ def on_key_down(key):
             game.state = PAUSED
         elif game.state == PAUSED:
             game.state = PLAYING
+        elif game.state == INSTRUCTIONS:
+            game.state = MENU
         return
     if game.state != PLAYING:
         return
@@ -1002,22 +1202,33 @@ def on_mouse_down(pos, button):
     if game.state == MENU:
         if START_RECT.collidepoint(pos):
             game.start()
+        elif INSTRUCTIONS_RECT.collidepoint(pos):
+            game.state = INSTRUCTIONS
         elif MENU_AUDIO_RECT.collidepoint(pos):
             toggle_audio()
         elif MENU_EXIT_RECT.collidepoint(pos):
             exit()
+    elif game.state == INSTRUCTIONS:
+        if BACK_RECT.collidepoint(pos):
+            game.state = MENU
     elif game.state == PAUSED:
         if RESUME_RECT.collidepoint(pos):
             game.state = PLAYING
         elif PAUSE_AUDIO_RECT.collidepoint(pos):
             toggle_audio()
         elif PAUSE_MENU_RECT.collidepoint(pos):
+            stop_all_sounds()
             game.state = MENU
     elif game.state == WIN or game.state == LOSE:
         if AGAIN_RECT.collidepoint(pos):
             game.start()
         elif END_MENU_RECT.collidepoint(pos):
+            stop_all_sounds()
             game.state = MENU
 
 
-music.play('background_music')
+# The main theme loops on the dedicated music channel; the menu's
+# Music & Sounds button controls its volume (music.set_volume), so the
+# toggle always governs this track no matter where it's clicked.
+music.play('menu_and_game_music')
+music.set_volume(1.0)
