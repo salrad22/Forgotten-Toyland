@@ -33,9 +33,7 @@ TUNNEL_ALPHA = 160          # tunnel transparency: 0 = invisible, 255 = solid
 # Level geometry
 FLOOR = Rect((0, 660), (WIDTH, 48))
 PLATFORMS = [
-    Rect((60, 440), (120, 20)),    # upper step near the spawn
-    Rect((180, 540), (130, 20)),   # lower step near the spawn
-    Rect((360, 410), (120, 20)),   # bridge step toward the tunnel
+    Rect((180, 540), (130, 20)),   # the single step near the spawn
 ]
 # The tunnel block sits ON the floor. It is solid for the mother
 # (who can jump over it - it is shorter than her jump), but the baby,
@@ -191,7 +189,23 @@ class Character:
                 and top + self.box_height > solid.top)
 
     def update(self, dt, move_direction, solids):
-        """Apply horizontal input, gravity and collisions with solids."""
+        """Apply input, gravity and collisions with solids.
+
+        The physics runs in fixed slices of at most 1/60 s: on a real
+        machine a single slow frame (image loading, window hiccups)
+        makes dt spike, which can move a falling character hundreds of
+        pixels in one step - straight through the floor. Slicing keeps
+        every collision step small.
+        """
+        elapsed = dt
+        while dt > 0:
+            step_time = min(dt, 1 / 60)
+            dt -= step_time
+            self._move_step(step_time, move_direction, solids)
+        self.animate(elapsed, move_direction)
+
+    def _move_step(self, dt, move_direction, solids):
+        """One physics slice: input, gravity, collisions."""
         if move_direction:
             self.facing = move_direction
         self.actor.x += move_direction * self.speed * dt
@@ -220,8 +234,6 @@ class Character:
             self.actor.x = half_width
         if self.actor.x > WIDTH - half_width:
             self.actor.x = WIDTH - half_width
-
-        self.animate(dt, move_direction)
 
     def animate(self, dt, move_direction):
         """Choose and apply the sprite frame for the current state."""
@@ -282,7 +294,8 @@ class Child(Character):
         self.jump_image = 'baby_idle'
         self.calling_image = 'baby_calling_mom'
         self.walk_animation = Animation(
-            ['baby_carwl_1', 'baby_carwl_2', 'baby_carwl_3'],
+            ['baby_carwl_1', 'baby_carwl_2', 'baby_carwl_3',
+             'baby_carwl_4'],
             WALK_FRAME_TIME)
 
     def animate(self, dt, move_direction):
@@ -467,6 +480,9 @@ class Bear(Enemy):
             self.set_image(self.HAPPY_IMAGE)
             self.happy_sprite = True
         except KeyError:
+            # A failed load still leaves the image NAME set on the
+            # actor, so point it back at the base sprite.
+            self.set_image(self.BASE_IMAGE)
             self.happy_sprite = False
 
     @property
@@ -498,7 +514,7 @@ class Bear(Enemy):
         self.update_brain(dt, targets)
 
     def draw(self):
-        self.actor.draw()
+        draw_sprite_feet_down(self.actor)
         center_x = self.actor.x
         top = self.box.top
         if self.repaired:
@@ -797,6 +813,22 @@ def draw_background():
     screen.blit('background', (x, y))
 
 
+def draw_sprite_feet_down(actor):
+    """Draw a character sprite with its feet at actor.y, centred on
+    actor.x, using explicit coordinates.
+
+    Actor.draw()/anchor semantics differ between pgzero versions, so
+    characters are positioned manually - this works everywhere.
+    Draws the actor's already-loaded surface (not the image name, which
+    could point at an image that failed to load).
+    """
+    surface = getattr(actor, '_surf', None)
+    if surface is None:
+        surface = actor.image
+    screen.blit(surface, (actor.x - actor.width / 2,
+                          actor.y - actor.height))
+
+
 def draw_button(rect, label):
     screen.draw.filled_rect(rect, BUTTON_FILL)
     screen.draw.rect(rect, INK)
@@ -869,7 +901,7 @@ def draw_level():
         screen.draw.filled_circle(EYE_POS, 8, INK)
         screen.draw.filled_circle(EYE_POS, 3, (30, 30, 40))
     if not game.carrying:
-        game.child.actor.draw()
+        draw_sprite_feet_down(game.child.actor)
 
     images.tunnel.set_alpha(TUNNEL_ALPHA)
     screen.blit('tunnel', TUNNEL.topleft)
@@ -887,7 +919,7 @@ def draw_level():
     game.robot.draw()
     game.bear.draw()
 
-    game.mother.actor.draw()
+    draw_sprite_feet_down(game.mother.actor)
 
     hero = game.active
     marker_x = hero.actor.x
@@ -941,6 +973,10 @@ def draw():
 
 
 def update(dt):
+    # Clamp huge frames (first-frames image loading, dragging the
+    # window, machine hiccups): without this a dt spike teleports
+    # falling characters through the floor in a single step.
+    dt = min(dt, 0.1)
     if game.state == PLAYING:
         game.update_playing(dt)
 

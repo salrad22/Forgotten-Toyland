@@ -59,8 +59,8 @@ Game rules
 ----------
 - The child cannot wander further than a short radius from the mother;
   when it hits the limit it stops and calls "Mommy!".
-- The tunnel block is solid for the mother - she can jump over it (or
-  cross on the platform bridge). The baby cannot jump, so it crawls
+- The tunnel block is solid for the mother - she can jump over it
+  (it is shorter than her jump). The baby cannot jump, so it crawls
   right through the tunnel instead (the block is semi-transparent, so
   you can watch it inside and see the hidden eye).
 - The baby cannot be dropped onto the top of the tunnel block.
